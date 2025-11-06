@@ -1,94 +1,104 @@
 # === Windows Deep Cleanup (safe targets only) ===
 # Run in an elevated PowerShell window (Administrator)
 
-# Fail fast on critical errors but keep going on deletes
 $ErrorActionPreference = 'Continue'
 
-# Helper: delete contents of a path if it exists
 function Clear-Path {
     param([string]$Path)
-    if (Test-Path $Path) {
-        Write-Host "Clearing: $Path"
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    if (Test-Path -Path $Path) {
         try {
-            Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction SilentlyContinue |
+            Get-ChildItem -Path $Path -Force -Recurse -ErrorAction SilentlyContinue |
                 Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-        } catch {
-            Write-Host "  Skipped (in use or protected): $Path"
-        }
+        } catch {}
     }
 }
 
-# Measure space before
-$drive = 'C'
-$before = (Get-PSDrive $drive).Free
-
-# Stop services that can lock caches
-$svc = 'wuauserv','bits'
-foreach ($s in $svc) {
-    if ((Get-Service $s -ErrorAction SilentlyContinue).Status -eq 'Running') {
-        try { Stop-Service $s -Force -ErrorAction SilentlyContinue } catch {}
-    }
+function Get-FolderSizeBytes {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return 0 }
+    try {
+        (Get-ChildItem -LiteralPath $Path -Force -File -Recurse -ErrorAction SilentlyContinue |
+            Measure-Object -Sum Length).Sum
+    } catch { 0 }
 }
 
-# --- System-wide temp + update cache ---
+function Show-SummaryBox {
+    param([double]$StartGB,[double]$GainedGB,[double]$EndGB,[string]$Profiles)
+    $sentence = "You started with $StartGB GB, you gained $GainedGB GB, for a total of $EndGB GB."
+    $title = "Cleanup Summary"
+    $width = [Math]::Max($sentence.Length, $title.Length) + 6
+    $h = "-" * ($width - 2)
+    $top = "+" + $h + "+"
+    $bottom = "+" + $h + "+"
+
+    function CenterLine($text, $width) {
+        $inner = $width - 2
+        $pad = [Math]::Max(0, $inner - $text.Length)
+        $left = [Math]::Floor($pad / 2)
+        $right = $pad - $left
+        "|" + (" " * $left) + $text + (" " * $right) + "|"
+    }
+
+    Write-Host ""
+    Write-Host $top
+    Write-Host (CenterLine $title $width)
+    Write-Host ("|" + (" " * ($width - 2)) + "|")
+    Write-Host (CenterLine $sentence $width)
+    Write-Host $bottom
+    Write-Host ""
+    Write-Host $Profiles
+}
+
+$driveLetter = ($env:SystemDrive -replace ':$','')
+$before = (Get-PSDrive $driveLetter).Free
+
+$services = @('wuauserv','bits')
+foreach ($svc in $services) { try { Stop-Service $svc -Force -ErrorAction SilentlyContinue } catch {} }
+
 Clear-Path "C:\Windows\Temp"
-Clear-Path "C:\Windows\Prefetch"          # harmless to clear; Windows will rebuild
-Clear-Path "C:\Windows\SoftwareDistribution\Download"  # Windows Update download cache
-Clear-Path "C:\Windows\Logs\CBS\Logs"     # verbose servicing logs
-Clear-Path "C:\$Recycle.Bin"
+Clear-Path "C:\Windows\Prefetch"
+Clear-Path "C:\Windows\SoftwareDistribution\Download"
+Clear-Path "C:\Windows\Logs\CBS"
+try { Clear-RecycleBin -Force -ErrorAction SilentlyContinue } catch {}
 
-# --- Per-user caches (all profiles under C:\Users) ---
 $profiles = Get-ChildItem 'C:\Users' -Directory -Force |
             Where-Object { $_.Name -notmatch '^(Default|All Users|Default User|Public)$' }
 
 foreach ($p in $profiles) {
     $u = $p.FullName
-
-    # User temp
     Clear-Path "$u\AppData\Local\Temp"
-
-    # Browsers
-    # Chrome
     Clear-Path "$u\AppData\Local\Google\Chrome\User Data\*\Cache"
-    Clear-Path "$u\AppData\Local\Google\Chrome\User Data\*\Code Cache"
-    Clear-Path "$u\AppData\Local\Google\Chrome\User Data\*\GPUCache"
-    # Edge
     Clear-Path "$u\AppData\Local\Microsoft\Edge\User Data\*\Cache"
-    Clear-Path "$u\AppData\Local\Microsoft\Edge\User Data\*\Code Cache"
-    Clear-Path "$u\AppData\Local\Microsoft\Edge\User Data\*\GPUCache"
-    # Firefox
     Clear-Path "$u\AppData\Local\Mozilla\Firefox\Profiles\*\cache2"
-
-    # Teams / Zoom
     Clear-Path "$u\AppData\Roaming\Microsoft\Teams\Cache"
-    Clear-Path "$u\AppData\Roaming\Microsoft\Teams\Code Cache"
-    Clear-Path "$u\AppData\Roaming\Microsoft\Teams\GPUCache"
     Clear-Path "$u\AppData\Roaming\Zoom\data"
-    Clear-Path "$u\AppData\Roaming\Zoom\bin\cef\Cache"
-    Clear-Path "$u\AppData\Roaming\Zoom\logs"
-
-    # Common app installers & leftover crash dumps
     Clear-Path "$u\Downloads\*.tmp"
-    Clear-Path "$u\Downloads\*.log"
-    Clear-Path "$u\Documents\*.dmp"
 }
 
-# Empty Recycle Bin (all drives)
-try { Clear-RecycleBin -Force -ErrorAction SilentlyContinue } catch {}
+try { & dism.exe /Online /Cleanup-Image /StartComponentCleanup } catch {}
 
-# Restart services we stopped
-foreach ($s in $svc) {
-    try { Start-Service $s -ErrorAction SilentlyContinue } catch {}
+$after = (Get-PSDrive $driveLetter).Free
+$startGB  = [math]::Round($before / 1GB, 2)
+$endGB    = [math]::Round($after  / 1GB, 2)
+$gainedGB = [math]::Round($endGB - $startGB, 2)
+
+foreach ($svc in $services) { try { Start-Service $svc -ErrorAction SilentlyContinue } catch {} }
+
+$profileSizes = foreach ($p in $profiles) {
+    try {
+        $bytes = (Get-ChildItem -LiteralPath $p.FullName -Force -File -Recurse -ErrorAction SilentlyContinue |
+                  Measure-Object -Sum Length).Sum
+        [pscustomobject]@{ Profile = $p.Name; SizeGB = [math]::Round(($bytes / 1GB), 2); Path = $p.FullName }
+    } catch {
+        [pscustomobject]@{ Profile = $p.Name; SizeGB = 0; Path = $p.FullName }
+    }
 }
 
-# Component Store cleanup (safe)
-Start-Process -FilePath "dism.exe" -ArgumentList "/Online","/Cleanup-Image","/StartComponentCleanup","/Quiet" -Wait
+$ProfileTable = $profileSizes |
+    Sort-Object SizeGB -Descending |
+    Format-Table -AutoSize Profile, SizeGB, Path |
+    Out-String -Width 4096
 
-# Measure space after
-$after = (Get-PSDrive $drive).Free
-$freed = [math]::Round(($after - $before) / 1GB, 2)
-
-Write-Host ""
-Write-Host "Cleanup complete."
-Write-Host "Freed approximately: $freed GB"
-Write-Host "Free space now: $([math]::Round($after/1GB,2)) GB on $drive`:"
+# Single clean output with both the summary and profiles printed together
+Show-SummaryBox -StartGB $startGB -GainedGB $gainedGB -EndGB $endGB -Profiles $ProfileTable
