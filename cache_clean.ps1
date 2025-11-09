@@ -74,13 +74,36 @@
 
     foreach ($p in $profiles) {
         $u = $p.FullName
+
+        # Local temp
         Clear-Path "$u\AppData\Local\Temp"
+
+        # Browsers
+        # Chrome
         Clear-Path "$u\AppData\Local\Google\Chrome\User Data\*\Cache"
+        Clear-Path "$u\AppData\Local\Google\Chrome\User Data\*\Code Cache"
+        Clear-Path "$u\AppData\Local\Google\Chrome\User Data\*\GPUCache"
+
+        # Edge
         Clear-Path "$u\AppData\Local\Microsoft\Edge\User Data\*\Cache"
+        Clear-Path "$u\AppData\Local\Microsoft\Edge\User Data\*\Code Cache"
+        Clear-Path "$u\AppData\Local\Microsoft\Edge\User Data\*\GPUCache"
+
+        # Firefox
         Clear-Path "$u\AppData\Local\Mozilla\Firefox\Profiles\*\cache2"
+
+        # Teams and Zoom
         Clear-Path "$u\AppData\Roaming\Microsoft\Teams\Cache"
+        Clear-Path "$u\AppData\Roaming\Microsoft\Teams\Code Cache"
+        Clear-Path "$u\AppData\Roaming\Microsoft\Teams\GPUCache"
         Clear-Path "$u\AppData\Roaming\Zoom\data"
+        Clear-Path "$u\AppData\Roaming\Zoom\bin\cef\Cache"
+        Clear-Path "$u\AppData\Roaming\Zoom\logs"
+
+        # Common app installers and leftover crash dumps
         Clear-Path "$u\Downloads\*.tmp"
+        Clear-Path "$u\Downloads\*.log"
+        Clear-Path "$u\Documents\*.dmp"
     }
 
     # Component cleanup
