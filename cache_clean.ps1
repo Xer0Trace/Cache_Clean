@@ -106,8 +106,8 @@
         Clear-Path "$u\Documents\*.dmp"
     }
 
-    # Component cleanup
-    try { & dism.exe /Online /Cleanup-Image /StartComponentCleanup } catch {}
+    # Component cleanup using explicit DISM path (fixes command precedence warning)
+    try { & "$env:SystemRoot\System32\dism.exe" /Online /Cleanup-Image /StartComponentCleanup } catch {}
 
     # Calculate disk gain
     $after = (Get-PSDrive $driveLetter).Free
