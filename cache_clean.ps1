@@ -1,6 +1,7 @@
 # === Windows Deep Cleanup (safe targets only) ===
 # Run in an elevated PowerShell window (Administrator)
 # Executes automatically when pasted or run.
+# If you paste this into the console, press Enter once after the paste to start it.
 
 & {
     $ErrorActionPreference = 'Continue'
